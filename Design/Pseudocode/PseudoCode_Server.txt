@@ -1,0 +1,40 @@
+// Server
+
+
+fucntion Main
+{
+    call InitServer
+
+    init client list
+}
+
+function InitServer
+{
+    create server socket
+
+    listen for clients
+}
+
+function AcceptClient
+{
+    accept client connection
+
+    store client IP address in client list
+}
+
+function ReadLoop
+{
+    while user does not end process do
+    {
+        receive text from connection
+        check which client sent text
+        forward text to all other clients
+    }
+}
+
+function CleanupSocket
+{
+    transmit teardown message to all clients
+
+    teardown server socket
+}
