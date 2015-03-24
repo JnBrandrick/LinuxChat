@@ -1,0 +1,12 @@
+
+#MakeServer
+
+CC=g++ -Wall -g
+
+Client: Client.o
+	$(CC) -o Client Client.o
+
+clean:
+	rm -f *.o core.* Client
+Server.o:
+	$(CC) -c Client.cpp

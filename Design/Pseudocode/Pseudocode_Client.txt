@@ -1,1 +1,56 @@
 // Client
+
+/*
+ * Program takes a command line argument for the server's host name and an
+ *  optional second argument for the port number
+ *
+ * This program makes use of two threads.
+ *  The Send thread runs whenever the user presses enter in the MessageLoop. - contension
+ *  The Receive thread runs constantly in the background. It receives text
+ *      from the server and prints it to the screen.
+ */
+
+function Main
+{
+    call InitClient
+
+    call MessageLoop
+
+    call CleanupSocket
+}
+
+function InitClient
+{
+    create client socket
+
+    connect to server
+
+    display program title
+}
+
+function MessageLoop
+{
+    call ReceiveLoop in separate thread
+
+    while true do
+    {
+        pull user text
+
+        send text to server
+    }
+}
+
+function ReceiveLoop
+{
+    while true do
+    {
+        receive text from server
+
+        print text to screen
+    }
+}
+
+function CleanupSocket
+{
+    teardown client socket
+}
