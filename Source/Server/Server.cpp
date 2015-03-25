@@ -7,15 +7,6 @@ int main()
     SocketInfo *lpSockInfo;
     int argument = 1;
 
-    struct sigaction sigAct;
-    struct sigaction oldSigAct;
-
-    sigAct.sa_handler = SignalHandler;
-    sigemptyset(&sigAct.sa_mask);
-    sigAct.sa_flags = 0;
-
-    sigaction(SIGINT, &sigAct, &oldSigAct);
-
     if((lpSockInfo = InitServer()) == NULL)
     {
         return -1;
@@ -24,7 +15,6 @@ int main()
     if(setsockopt (lpSockInfo->Listen, SOL_SOCKET, SO_REUSEADDR, &argument, sizeof(argument)) == -1)
     {
         cerr << "Socket option failed" << endl;
-        delete lpSockInfo->Address;
         delete lpSockInfo;
         return -1;
     }
@@ -32,7 +22,6 @@ int main()
     if(bind(lpSockInfo->Listen, (struct sockaddr *)&lpSockInfo->ServerAddr, sizeof(lpSockInfo->ServerAddr)) == -1)
     {
         cerr << "Bind failed" << endl;
-        delete lpSockInfo->Address;
         delete lpSockInfo;
         return -1;
     }
@@ -40,23 +29,18 @@ int main()
     if(listen(lpSockInfo->Listen, 5) == -1)
     {
         cerr << "Listen failed" << endl;
-        delete lpSockInfo->Address;
         delete lpSockInfo;
         return -1;
     }
 
     if(ServerLoop(lpSockInfo) < 0)
     {
-        delete lpSockInfo->Address;
-        delete lpSockInfo;
+        CleanupSocket(lpSockInfo);
         return -1;
     }
 
     CleanupSocket(lpSockInfo);
 
-    sigaction(SIGINT, &oldSigAct, NULL);
-
-    cout << "EXITTING" << endl;
     return 0;
 }
 
@@ -70,9 +54,7 @@ SocketInfo *InitServer()
         delete lpSockInfo;
         return NULL;
     }
-    lpSockInfo->Address = new char[32];
 
-    strcpy(lpSockInfo->Address, "127.0.0.1");
     lpSockInfo->Port = DEFAULT_PORT;
 
     bzero((char *)&lpSockInfo->ServerAddr, sizeof(struct sockaddr_in));
@@ -90,6 +72,7 @@ SocketInfo *InitServer()
 
 int ServerLoop(SocketInfo *lpSockInfo)
 {
+    string address;
     char buffer[BUFF_LEN];
     char *bufferPtr;
     ssize_t bytesRecv;
@@ -128,6 +111,7 @@ int ServerLoop(SocketInfo *lpSockInfo)
             {
                 if(lpSockInfo->ClientList[i] < 0)
                 {
+                    cout << "Added: " << newSocket << endl;
                     lpSockInfo->ClientList[i] = newSocket;
 
                     break;
@@ -144,9 +128,9 @@ int ServerLoop(SocketInfo *lpSockInfo)
             {
                 maxFileDes = newSocket;
             }
-            if(i > maxIndex)
+            if(i >= maxIndex)
             {
-                maxIndex = i;
+                maxIndex = i + 1;
             }
             if(--numReady <= 0)
             {
@@ -165,18 +149,20 @@ int ServerLoop(SocketInfo *lpSockInfo)
             if(FD_ISSET(fromClient, &tempDes))
             {
                 bufferPtr = buffer;
-                while((bytesRecv = read(fromClient, bufferPtr, BUFF_LEN)) > 0)
-                {
-                    bufferPtr += bytesRecv;
-                }
+                read(fromClient, bufferPtr, BUFF_LEN);
+
+                buffer[strlen(buffer)] = 0;
+
+                cout << "Buffer: " << buffer << endl;
                 for(int j = 0; j < maxIndex; j++)
                 {
                     if(lpSockInfo->ClientList[j] == lpSockInfo->Listen || lpSockInfo->ClientList[j] == fromClient)
                     {
                         continue;
                     }
+                    address = string(inet_ntoa(lpSockInfo->ClientAddr.sin_addr)) + ": " + string(buffer);
 
-                    write(lpSockInfo->ClientList[j], buffer, BUFF_LEN);
+                    cout << "Sending: " << write(lpSockInfo->ClientList[j], address.c_str(), strlen(address.c_str()) + 1) << endl;
                 }
                 if(bytesRecv == 0)
                 {
@@ -189,6 +175,9 @@ int ServerLoop(SocketInfo *lpSockInfo)
                 {
                     continue;
                 }
+                address = "";
+                strcpy(buffer, "");
+                bytesRecv = 0;
             }
         }
     }
@@ -198,17 +187,9 @@ int ServerLoop(SocketInfo *lpSockInfo)
 
 int CleanupSocket(SocketInfo *lpSockInfo)
 {
-    cout << "Before" << endl;
     close(lpSockInfo->Listen);
-    cout << "After" << endl;
 
-    delete lpSockInfo->Address;
     delete lpSockInfo;
 
     return 0;
-}
-
-void SignalHandler(int sigNum)
-{
-    cout << "Signal caught" << endl;
 }

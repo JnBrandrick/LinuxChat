@@ -1,12 +1,13 @@
 
-#MakeServer
+#MakeClient
 
 CC=g++ -Wall -g
+CLIB=-lpthread
 
 Client: Client.o
-	$(CC) -o Client Client.o
+	$(CC) -o Client Client.o $(CLIB)
 
 clean:
 	rm -f *.o core.* Client
-Server.o:
-	$(CC) -c Client.cpp
+Client.o:
+	$(CC) -c Client.cpp 

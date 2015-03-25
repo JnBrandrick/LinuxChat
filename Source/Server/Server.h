@@ -2,24 +2,22 @@
 #define SERVER_H
 
 #include <iostream>
-#include <string>
+#include <sstream>
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <signal.h>
 #include <string.h>
 #include <strings.h>
 
 #define DEFAULT_PORT 7000
-#define BUFF_LEN 255
+#define BUFF_LEN 256
 
 struct SocketInfo
 {
     int Listen;
-    char *Address;
     int Port;
     struct sockaddr_in ServerAddr;
     struct sockaddr_in ClientAddr;
@@ -29,6 +27,5 @@ struct SocketInfo
 SocketInfo *InitServer();
 int ServerLoop(SocketInfo *lpSockInfo);
 int CleanupSocket(SocketInfo *lpSockInfo);
-void SignalHandler(int sigNum);
 
 #endif

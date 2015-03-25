@@ -1,11 +1,14 @@
 // Server
 
-
-fucntion Main
+function Main
 {
+    start program
+
     call InitServer
 
-    init client list
+    call ServerLoop
+
+    call CleanupSocket
 }
 
 function InitServer
@@ -15,20 +18,34 @@ function InitServer
     listen for clients
 }
 
-function AcceptClient
+function ServerLoop
 {
-    accept client connection
-
-    store client IP address in client list
-}
-
-function ReadLoop
-{
-    while user does not end process do
+    while true do
     {
-        receive text from connection
-        check which client sent text
-        forward text to all other clients
+        check sockets for event
+
+        if new client connects
+        {
+            accept client
+            add client to ClientList
+        }
+        for each client do
+        {
+            if client sent text
+            {
+                receive text from client
+
+                for each client do
+                {
+                    if client is either the listen socket or the one who sent the text
+                    {
+                        skip to next socket
+                    }
+
+                    send text to client
+                }
+            }
+        }
     }
 }
 
