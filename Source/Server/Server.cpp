@@ -1,94 +1,59 @@
+#include <cstring>
+
 #include "Server.h"
 
 using namespace std;
 
 int main()
 {
-    SocketInfo *lpSockInfo;
-    int argument = 1;
+    int listenSocket;
+    int result = 0;
 
-    if((lpSockInfo = InitServer()) == NULL)
-    {
+    if((listenSocket = InitServer()) < 0)
         return -1;
+
+    if(ServerLoop(listenSocket) < 0)
+    {
+        result = -1;
     }
 
-    if(setsockopt (lpSockInfo->Listen, SOL_SOCKET, SO_REUSEADDR, &argument, sizeof(argument)) == -1)
-    {
-        cerr << "Socket option failed" << endl;
-        delete lpSockInfo;
-        return -1;
-    }
+    CleanupSocket(listenSocket);
 
-    if(bind(lpSockInfo->Listen, (struct sockaddr *)&lpSockInfo->ServerAddr, sizeof(lpSockInfo->ServerAddr)) == -1)
-    {
-        cerr << "Bind failed" << endl;
-        delete lpSockInfo;
-        return -1;
-    }
-
-    if(listen(lpSockInfo->Listen, 5) == -1)
-    {
-        cerr << "Listen failed" << endl;
-        delete lpSockInfo;
-        return -1;
-    }
-
-    if(ServerLoop(lpSockInfo) < 0)
-    {
-        CleanupSocket(lpSockInfo);
-        return -1;
-    }
-
-    CleanupSocket(lpSockInfo);
-
-    return 0;
+    return result;
 }
 
-SocketInfo *InitServer()
+int InitServer()
 {
-    SocketInfo *lpSockInfo = new SocketInfo;
+    int socket;
 
-    if((lpSockInfo->Listen = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-    {
-        cerr << "Listen socket failed" << endl;
-        delete lpSockInfo;
-        return NULL;
-    }
+    if((socket = TCPSocket()) < 0)
+        return -1;
 
-    lpSockInfo->Port = DEFAULT_PORT;
+    if(SetReuseOpt(socket) < 0)
+        return -1;
 
-    bzero((char *)&lpSockInfo->ServerAddr, sizeof(struct sockaddr_in));
-    lpSockInfo->ServerAddr.sin_family = AF_INET;
-    lpSockInfo->ServerAddr.sin_port = htons(DEFAULT_PORT);
-    lpSockInfo->ServerAddr.sin_addr.s_addr = htonl(INADDR_ANY); // Accept connections from any client
+    if(BindSocket(socket) < 0)
+        return -1;
 
-    for(int i = 0; i < FD_SETSIZE; i++)
-    {
-        lpSockInfo->ClientList[i] = -1;
-    }
+    if(ListenClient(socket) < 0)
+        return -1;
 
-    return lpSockInfo;
+    return socket;
 }
 
-int ServerLoop(SocketInfo *lpSockInfo)
+int ServerLoop(int listenSocket)
 {
+    vector<ClientInfo> clientList;
+    ClientInfo newClient;
     string address;
-    char buffer[BUFF_LEN];
-    char *bufferPtr;
-    ssize_t bytesRecv;
-    unsigned int clientLen;
     int maxFileDes;
-    int maxIndex;
     int numReady;
-    int i;
-    int newSocket, fromClient;
     fd_set allDes, tempDes;
 
-    maxFileDes = lpSockInfo->Listen;
-    maxIndex = -1;
+    maxFileDes = listenSocket;
 
 	FD_ZERO(&allDes);
-	FD_SET(lpSockInfo->Listen, &allDes);
+	FD_SET(listenSocket, &allDes);
 
     while(true)
     {
@@ -96,41 +61,26 @@ int ServerLoop(SocketInfo *lpSockInfo)
         numReady = select(maxFileDes + 1, &tempDes, NULL, NULL, NULL);
 
         // Check if a new client has connected
-        if(FD_ISSET(lpSockInfo->Listen, &tempDes))
+        if(FD_ISSET(listenSocket, &tempDes))
         {
-            clientLen = sizeof(lpSockInfo->ClientAddr);
-            if((newSocket = accept(lpSockInfo->Listen, (struct sockaddr *)&lpSockInfo->ClientAddr, &clientLen)) == -1)
+            newClient = AcceptClient(listenSocket);
+            if(newClient.Socket < 0)
+                return -1;
+
+            DisplayOutput("Client connected: " + newClient.Address);
+
+            clientList.push_back(newClient);
+
+            if(clientList.size() == FD_SETSIZE)
             {
-                cerr << "Accept failed" << endl;
+                DisplayError("Too many clients");
                 return -1;
             }
 
-            cout << "Client connected: " << inet_ntoa(lpSockInfo->ClientAddr.sin_addr) << endl;
-
-            for(i = 0; i < FD_SETSIZE; i++)
+            FD_SET(newClient.Socket, &allDes);
+            if(newClient.Socket > maxFileDes)
             {
-                if(lpSockInfo->ClientList[i] < 0)
-                {
-                    cout << "Added: " << newSocket << endl;
-                    lpSockInfo->ClientList[i] = newSocket;
-
-                    break;
-                }
-            }
-            if(i == FD_SETSIZE)
-            {
-                cerr << "Too many clients" << endl;
-                return -1;
-            }
-
-            FD_SET(newSocket, &allDes);
-            if(newSocket > maxFileDes)
-            {
-                maxFileDes = newSocket;
-            }
-            if(i >= maxIndex)
-            {
-                maxIndex = i + 1;
+                maxFileDes = newClient.Socket;
             }
             if(--numReady <= 0)
             {
@@ -139,57 +89,64 @@ int ServerLoop(SocketInfo *lpSockInfo)
         }
 
         // Check if a client has sent data
-        for(i = 0; i < maxIndex; i++)
-        {
-            if((fromClient = lpSockInfo->ClientList[i]) < 0)
-            {
-                continue;
-            }
-
-            if(FD_ISSET(fromClient, &tempDes))
-            {
-                bufferPtr = buffer;
-                read(fromClient, bufferPtr, BUFF_LEN);
-
-                buffer[strlen(buffer)] = 0;
-
-                cout << "Buffer: " << buffer << endl;
-                for(int j = 0; j < maxIndex; j++)
-                {
-                    if(lpSockInfo->ClientList[j] == lpSockInfo->Listen || lpSockInfo->ClientList[j] == fromClient)
-                    {
-                        continue;
-                    }
-                    address = string(inet_ntoa(lpSockInfo->ClientAddr.sin_addr)) + ": " + string(buffer);
-
-                    cout << "Sending: " << write(lpSockInfo->ClientList[j], address.c_str(), strlen(address.c_str()) + 1) << endl;
-                }
-                if(bytesRecv == 0)
-                {
-                    cout << "Remote Address: " << inet_ntoa(lpSockInfo->ClientAddr.sin_addr) << " closed connection" << endl;
-                	close(fromClient);
-                	FD_CLR(fromClient, &allDes);
-                    lpSockInfo->ClientList[i] = -1;
-                }
-                if(--numReady <= 0)
-                {
-                    continue;
-                }
-                address = "";
-                strcpy(buffer, "");
-                bytesRecv = 0;
-            }
-        }
+        RecvClientMessage(clientList, &allDes, &tempDes, numReady);
     }
 
     return 0;
 }
 
-int CleanupSocket(SocketInfo *lpSockInfo)
+int RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *tempDes, int numReady)
 {
-    close(lpSockInfo->Listen);
+    ClientInfo fromClient;
+    string message;
+    char buffer[FD_SETSIZE];
+    char *bufferPtr;
+    int bytesRecv;
 
-    delete lpSockInfo;
+    for(unsigned int i = 0; i < clientList.size(); i++)
+    {
+        fromClient = clientList.at(i);
+        if(fromClient.Socket < 0)
+        {
+            continue;
+        }
+
+        if(FD_ISSET(fromClient.Socket, tempDes))
+        {
+            bufferPtr = buffer;
+            bytesRecv = read(fromClient.Socket, bufferPtr, BUFF_LEN);
+            buffer[strlen(buffer)] = 0;
+
+            message = fromClient.Address + ": " + string(buffer);
+
+            if(bytesRecv == 0)
+            {
+                DisplayOutput("Remote Address: " + fromClient.Address + " closed connection");
+                close(fromClient.Socket);
+
+                FD_CLR(fromClient.Socket, allDes);
+                clientList.erase(clientList.begin() + i);
+                i--;
+                continue;
+            }
+            DisplayOutput(message);
+            for(unsigned int j = 0; j < clientList.size(); j++)
+            {
+                if(clientList.at(j).Socket == fromClient.Socket)
+                {
+                    continue;
+                }
+
+                write(clientList.at(j).Socket, message.c_str(), strlen(message.c_str()) + 1);
+            }
+            strcpy(buffer, "");
+            bytesRecv = 0;
+            if(--numReady <= 0)
+            {
+                break;
+            }
+        }
+    }
 
     return 0;
 }

@@ -1,114 +1,146 @@
+#include <iostream>
+#include <sstream>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <atomic>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <curses.h>
+
 #include "Client.h"
+#include "NetworkHelper.h"
 
 using namespace std;
 
+string outputText;
+bool serverFlag;
+
 int main(int argc, char **argv)
 {
-    SocketInfo *lpSockInfo;
-    char *address = new char[32];
-    int port;
     stringstream str;
+    string address;
+    int port;
+    int clientSocket;
 
     switch(argc)
     {
         case 2:
-            address = argv[1];
+            address = string(argv[1]);
             port = DEFAULT_PORT;
         break;
         case 3:
-            address = argv[1];
+            address = string(argv[1]);
             str << argv[2];
             if(!(str >> port))
             {
-                cerr << "Port must be a number" << endl;
+                DisplayError("Port must be a number");
                 return -1;
             }
         break;
         default:
-            cerr << "Usage: ./Client <address> <port>" << endl;
+            DisplayError("Usage: ./Client <address> <port>");
             return -1;
     }
 
-    if((lpSockInfo = InitClient(address, port)) == NULL)
-    {
+    if((clientSocket = InitClient(address, port)) < 0)
         return -1;
-    }
 
-    cout << TITLE_BANNER << endl;
+    serverFlag = true;
 
-    MessageLoop(lpSockInfo);
+    MessageLoop(clientSocket);
 
-    CleanupSocket(lpSockInfo);
+    CleanupSocket(clientSocket);
 
-    delete[] address;
     return 0;
 }
 
-SocketInfo *InitClient(char *address, int port)
+int InitClient(string address, int port)
 {
-    SocketInfo *lpSockInfo = new SocketInfo;
+    int clientSocket;
 
-    if((lpSockInfo->Socket = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-    {
-        cerr << "Socket failed" << endl;
-        return NULL;
-    }
+    if((clientSocket = TCPSocket()) < 0)
+        return -1;
 
-    bzero((char *)&lpSockInfo->ServerAddr, sizeof(struct sockaddr_in));
-    lpSockInfo->ServerAddr.sin_family = AF_INET;
-    lpSockInfo->ServerAddr.sin_port = htons(port);
-    if ((lpSockInfo->Host = gethostbyname(address)) == NULL)
-    {
-        cerr << "GetHostByName sailed" << endl;
-        return NULL;
-    }
-    bcopy(lpSockInfo->Host->h_addr, (char *)&lpSockInfo->ServerAddr.sin_addr, lpSockInfo->Host->h_length);
+    if(ServerConnect(clientSocket, address, port) < 0)
+        return -1;
 
-    if (connect (lpSockInfo->Socket, (struct sockaddr *)&lpSockInfo->ServerAddr, sizeof(lpSockInfo->ServerAddr)) == -1)
-	{
-		cerr << "Connect failed" << endl;
-		return NULL;
-	}
-
-    return lpSockInfo;
+    return clientSocket;
 }
 
-int MessageLoop(SocketInfo *lpSockInfo)
+int MessageLoop(int clientSocket)
 {
     pthread_t recvThread;
-    pthread_create(&recvThread, NULL, ReceiveLoop, &lpSockInfo->Socket);
+    char input;
 
-    while(true)
+    StartCurses();
+
+    printw(TITLE_BANNER.c_str());
+
+    pthread_create(&recvThread, NULL, ReceiveLoop, &clientSocket);
+
+    while(serverFlag)
     {
-        getline(cin, lpSockInfo->Output);
+        printw("You: ");
 
-        write(lpSockInfo->Socket, lpSockInfo->Output.c_str(), strlen(lpSockInfo->Output.c_str()) + 1);
+        while(input != '\n' && serverFlag)
+        {
+            input = getch();
+            printw("%c", input);
+            outputText += input;
+        }
+        outputText.pop_back();
+
+        write(clientSocket, outputText.c_str(), strlen(outputText.c_str()) + 1);
+
+        outputText = "";
+        input = ' ';
     }
+
+    EndCurses();
+
+    DisplayError("Server disconnected");
 
     return 0;
 }
 
 void* ReceiveLoop(void* param)
 {
-    int socket = *(int *)param;
+    int clientSocket = *(int *)param;
+    int bytesRecv;
     char buffer[BUFF_LEN];
-    cout << socket << endl;
 
-    while(true)
+    do
     {
-        read(socket, buffer, BUFF_LEN);
+        bytesRecv = read(clientSocket, buffer, BUFF_LEN);
         buffer[strlen(buffer)] = 0;
 
-        cout << "\r" << buffer << endl;
+        printw("\r%s\nYou: %s", buffer, outputText.c_str());
+        refresh();
     }
+    while(bytesRecv > 0);
+
+    serverFlag = false;
 
     return NULL;
 }
 
-int CleanupSocket(SocketInfo *lpSockInfo)
+void StartCurses()
 {
-    close(lpSockInfo->Socket);
-    delete lpSockInfo;
+    initscr();
+    cbreak();
+    noecho();
+    intrflush(stdscr, FALSE);
+    scrollok(stdscr,TRUE);
+}
 
-    return 0;
+void EndCurses()
+{
+    endwin();
 }

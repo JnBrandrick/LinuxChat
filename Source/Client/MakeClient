@@ -1,13 +1,15 @@
 
 #MakeClient
 
-CC=g++ -Wall -g
-CLIB=-lpthread
+CC=g++ -Wall -g -std=c++11
+CLIB=-lpthread -lncurses
 
-Client: Client.o
-	$(CC) -o Client Client.o $(CLIB)
+Client: Client.o NetworkHelper.o
+	$(CC) -o Client Client.o NetworkHelper.o $(CLIB)
 
 clean:
 	rm -f *.o core.* Client
 Client.o:
-	$(CC) -c Client.cpp 
+	$(CC) -c Client.cpp
+NetworkHelper.o:
+	$(CC) -c NetworkHelper.cpp

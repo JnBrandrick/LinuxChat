@@ -37,7 +37,7 @@ function ServerLoop
 
                 for each client do
                 {
-                    if client is either the listen socket or the one who sent the text
+                    if client is the one who sent the text
                     {
                         skip to next socket
                     }
