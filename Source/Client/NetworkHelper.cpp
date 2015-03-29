@@ -163,5 +163,5 @@ int CleanupSocket(int clientSocket)
 ----------------------------------------------------------------------------------------------------------------------*/
 void DisplayError(string errStr)
 {
-    cerr << errStr << endl;
+    cerr << "Error: " << errStr << endl;
 }

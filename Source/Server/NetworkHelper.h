@@ -25,6 +25,7 @@
 #ifndef NETWORKHELPER_H
 #define NETWORKHELPER_H
 
+#include <vector>
 #include <string>
 
 #define DEFAULT_PORT 7000
@@ -34,13 +35,14 @@ struct ClientInfo
 {
     int Socket;
     std::string Address;
+    std::string Name;
 };
 
 int TCPSocket();
 int SetReuseOpt(int listenSocket);
 int BindSocket(int listenSocket);
 int ListenClient(int listenSocket);
-int CleanupSocket(int listenSocket);
+int CleanupSocket(int listenSocket, std::vector<ClientInfo> clientList);
 ClientInfo AcceptClient(int listenSocket);
 
 void DisplayOutput(std::string output);

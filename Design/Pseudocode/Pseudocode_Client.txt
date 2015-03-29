@@ -34,6 +34,11 @@ function MessageLoop
 
     while true do
     {
+        if text has been received from server
+        {
+            print text
+        }
+    
         pull user text
 
         send text to server
@@ -45,8 +50,8 @@ function ReceiveLoop
     while true do
     {
         receive text from server
-
-        print text to screen
+        
+        send text to UI thread
     }
 }
 

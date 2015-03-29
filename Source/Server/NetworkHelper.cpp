@@ -192,15 +192,26 @@ int ListenClient(int listenSocket)
 -- NOTES:
 --  This function closes a TCP socket.
 ----------------------------------------------------------------------------------------------------------------------*/
-int CleanupSocket(int listenSocket)
+int CleanupSocket(int listenSocket, vector<ClientInfo> clientList)
 {
+    int result = 0;
+    
     if(close(listenSocket) < 0)
     {
-        DisplayError("Clsoe failed");
-        return -1;
+        DisplayError("Listen close failed");
+        result = -1;
+    }
+    
+    for(unsigned int i = 0; i < clientList.size(); i++)
+    {
+        if(close(clientList.at(i).Socket) < 0)
+        {
+            DisplayError(clientList.at(i).Name + " close failed");
+            result = -1;
+        }
     }
 
-    return 0;
+    return result;
 }
 
 /*----------------------------------------------------------------------------------------------------------------------

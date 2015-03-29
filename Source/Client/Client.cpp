@@ -4,12 +4,13 @@
 -- SOURCE FILE: Client.cpp - Initializes and runs a TCP chat client.
 --
 -- FUNCTIONS:
---  int main                (void)
---  int InitClient  (string address, int prot)
---  int MessageLoop (int clientSocket)
---  int ReceiveLoop (void *param)
---  int StartCurses (void)
---  int EndCurses   (void)
+--  int main            (void)
+--  int InitClient      (string address, int prot)
+--  int MessageLoop     (int clientSocket)
+--  int ReceiveLoop     (void *param)
+--  int StartCurses     (void)
+--  int EndCurses       (void)
+--  void SignalHandler  (int sigNum)
 --
 -- DATE: March 12, 2015
 --
@@ -38,6 +39,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <signal.h>
 #include <pthread.h>
 #include <curses.h>
 
@@ -46,9 +48,9 @@
 
 using namespace std;
 
-string outputText;
+string clientText;
 string fileName;
-bool serverFlag;
+bool serverExitFlag;
 
 /*----------------------------------------------------------------------------------------------------------------------
 -- FUNCTION: main
@@ -76,6 +78,8 @@ bool serverFlag;
 --
 --  Usage: <Program Name> <Server Address> <Server Port> <Optional File Name>
 --  Default port is 7000
+--
+--  This function also disables the CTRL-C signal so it can be caught ad handled. It then enables it before returning.
 ----------------------------------------------------------------------------------------------------------------------*/
 int main(int argc, char **argv)
 {
@@ -83,37 +87,63 @@ int main(int argc, char **argv)
     string address;
     int port = DEFAULT_PORT;
     int clientSocket;
+    int optRet;
+    char optString[] = "a:p:f:";
 
-    outputText = "";
+    struct sigaction sigAct;
+    struct sigaction oldSigAct;
+
+    clientText = "";
     fileName = "";
 
-    switch(argc)
+    if(argc == 1)
     {
-        case 2:
-            address = string(argv[1]);
-        break;
-        case 3:
-            address = string(argv[1]);
-            port = atoi(argv[2]);
-        break;
-        case 4:
-            address = string(argv[1]);
-            port = atoi(argv[2]);
-            fileName = string(argv[3]);
-        break;
-        default:
-            DisplayError("Usage: ./Client <address> <port> <filename>");
-            return -1;
+        DisplayError(USAGE_COUNT);
+        return -1;
     }
+
+    while((optRet = getopt(argc, argv, optString)) != -1)
+    {
+        switch(optRet)
+        {
+            case 'a':
+                address = string(optarg);
+            break;
+            case 'p':
+                str << optarg;
+                str >> port;
+            break;
+            case 'f':
+                fileName = string(optarg);
+            break;
+            case '?':
+                DisplayError(USAGE_ARGS);
+            return -1;
+        }
+    }
+    
+    if(optind < argc)
+    {
+        DisplayError(USAGE_INVALID + string(argv[optind]));
+        return -1;
+    }
+
+    sigAct.sa_handler = SignalHandler;
+    sigemptyset(&sigAct.sa_mask);
+    sigAct.sa_flags = 0;
+
+    sigaction(SIGINT, &sigAct, &oldSigAct);
 
     if((clientSocket = InitClient(address, port)) < 0)
         return -1;
 
-    serverFlag = true;
+    serverExitFlag = true;
 
     MessageLoop(clientSocket);
 
     CleanupSocket(clientSocket);
+    
+    sigaction(SIGINT, &oldSigAct, NULL);
 
     return 0;
 }
@@ -182,31 +212,42 @@ void MessageLoop(int clientSocket)
 
     StartCurses();
 
-    printw(TITLE_BANNER.c_str());
+    printw(TITLE_BANNER);
 
     pthread_create(&recvThread, NULL, ReceiveLoop, &clientSocket);
 
-    while(serverFlag)
+    while(serverExitFlag)
     {
-        printw("You: ");
+        printw(YOU);
+        clientText = "";
 
-        while(input != '\n' && serverFlag)
+        while(input != NL && serverExitFlag)
         {
             input = getch();
-            printw("%c", input);
-            outputText += input;
+            if(isprint(input))
+            {
+                clientText.push_back(input);
+                printw("%c", input);
+            }
+            if((input == BACKSPACE || input == DELETE) && clientText.length() > 0)
+            {
+                clientText.pop_back();
+                printw("%c", CR);
+                printw("%*s", clientText.length() + 10, " ");
+                printw("%c%s%s", CR, YOU, clientText.c_str());
+            }
+            if(input == NL)
+                printw("\n");
         }
-        outputText.pop_back();
 
-        write(clientSocket, outputText.c_str(), strlen(outputText.c_str()) + 1);
+        write(clientSocket, clientText.c_str(), strlen(clientText.c_str()) + 1);
 
-        outputText = "";
-        input = ' ';
+        input = CR;
     }
 
     EndCurses();
 
-    DisplayError("Server disconnected");
+    DisplayError(DISCONNECT);
 }
 
 /*----------------------------------------------------------------------------------------------------------------------
@@ -237,12 +278,13 @@ void MessageLoop(int clientSocket)
 ----------------------------------------------------------------------------------------------------------------------*/
 void* ReceiveLoop(void* param)
 {
+    string serverText;
     string message;
     int clientSocket = *(int *)param;
     int bytesRecv;
     char buffer[BUFF_LEN];
     ofstream outputFile;
-
+    
     outputFile.open(fileName);
 
     do
@@ -250,20 +292,19 @@ void* ReceiveLoop(void* param)
         bytesRecv = read(clientSocket, buffer, BUFF_LEN);
         buffer[strlen(buffer)] = 0;
 
-        message = "\r" + string(buffer) + "          \nYou: " + outputText;
-
+        serverText = string(buffer);
+        
+        message = CR + serverText + NL + YOU + clientText;
+        
         printw("%s", message.c_str());
         refresh();
-
+        
         if(fileName != "")
-        {
-            outputFile << message;
-        }
+            outputFile << serverText << endl;
     }
-    while(bytesRecv > 0);
+    while(buffer[0] != EOT && bytesRecv > 0 && serverExitFlag);
 
-    outputFile.close();
-    serverFlag = false;
+    serverExitFlag = false;
 
     return NULL;
 }
@@ -312,4 +353,28 @@ void StartCurses()
 void EndCurses()
 {
     endwin();
+}
+
+/*----------------------------------------------------------------------------------------------------------------------
+-- FUNCTION: SignalHandler
+--
+-- DATE: March 23, 2015
+--
+-- DESIGNER: Julian Brandrick
+--
+-- PROGRAMMER: Julian Brandrick
+--
+-- INTERFACE: void SignalHandler (int sigNum)
+--
+-- PARAMETERS:
+--  sigNum  -> Unused
+--
+-- RETURNS: void
+--
+-- NOTES:
+--  This function catches a signal and tells the client to disconnect and exit.
+----------------------------------------------------------------------------------------------------------------------*/
+void SignalHandler(int sigNum)
+{
+    serverExitFlag = false;
 }

@@ -8,6 +8,8 @@
 --  int InitServer          ()
 --  int ServerLoop          (int listenSocket)
 --  int RecvClientMessage   (vector<ClientInfo> &clientList, fd_set *allDes, fd_set *tempDes, int numReady)
+--  string Count            (string address)
+--  void SignalHandler      (int sigNum)
 --
 -- DATE: March 12, 2015
 --
@@ -20,11 +22,16 @@
 --
 --  It receives messages from clients and forwards them to all other connected clients.
 ----------------------------------------------------------------------------------------------------------------------*/
+#include <sstream>
 #include <cstring>
+#include <signal.h>
 
 #include "Server.h"
 
 using namespace std;
+
+vector<ClientInfo> clientList;
+bool serverExitFlag;
 
 /*----------------------------------------------------------------------------------------------------------------------
 -- FUNCTION: main
@@ -44,11 +51,23 @@ using namespace std;
 -- NOTES:
 --  This function starts the Server program. It first initializes a listening TCP socket and runs the server loop.
 --  When this loop finishes it closes the listening socket and exits.
+--  This function also disables the CTRL-C signal so it can be caught ad handled. It then enables it before returning.
 ----------------------------------------------------------------------------------------------------------------------*/
 int main()
 {
     int listenSocket;
     int result = 0;
+
+    struct sigaction sigAct;
+    struct sigaction oldSigAct;
+
+    sigAct.sa_handler = SignalHandler;
+    sigemptyset(&sigAct.sa_mask);
+    sigAct.sa_flags = 0;
+    
+    serverExitFlag = true;
+
+    sigaction(SIGINT, &sigAct, &oldSigAct);
 
     if((listenSocket = InitServer()) < 0)
         return -1;
@@ -58,7 +77,9 @@ int main()
         result = -1;
     }
 
-    CleanupSocket(listenSocket);
+    CleanupSocket(listenSocket, clientList);
+    
+    sigaction(SIGINT, &oldSigAct, NULL);
 
     return result;
 }
@@ -127,7 +148,6 @@ int InitServer()
 ----------------------------------------------------------------------------------------------------------------------*/
 int ServerLoop(int listenSocket)
 {
-    vector<ClientInfo> clientList;
     ClientInfo newClient;
     string address;
     int maxFileDes;
@@ -139,19 +159,21 @@ int ServerLoop(int listenSocket)
 	FD_ZERO(&allDes);
 	FD_SET(listenSocket, &allDes);
 
-    while(true)
+    while(serverExitFlag)
     {
         tempDes = allDes;
         numReady = select(maxFileDes + 1, &tempDes, NULL, NULL, NULL);
 
         // Check if a new client has connected
-        if(FD_ISSET(listenSocket, &tempDes))
+        if(FD_ISSET(listenSocket, &tempDes) && serverExitFlag)
         {
             newClient = AcceptClient(listenSocket);
             if(newClient.Socket < 0)
                 return -1;
 
-            DisplayOutput("Client connected: " + newClient.Address);
+            newClient.Name = Count(newClient.Address);
+
+            DisplayOutput("Client connected: " + newClient.Name);
 
             clientList.push_back(newClient);
 
@@ -172,8 +194,10 @@ int ServerLoop(int listenSocket)
             }
         }
 
-        RecvClientMessage(clientList, &allDes, &tempDes, numReady);
+        RecvClientMessage(&allDes, &tempDes, numReady);
     }
+    
+    DisplayOutput("Server disconnected");
 
     return 0;
 }
@@ -187,10 +211,9 @@ int ServerLoop(int listenSocket)
 --
 -- PROGRAMMER: Julian Brandrick
 --
--- INTERFACE: int RecvClientMessage (void)
+-- INTERFACE: int RecvClientMessage (fd_set *allDes, fd_set *tempDes, int numReady)
 --
 -- PARAMETERS:
---  &clientList -> Reference to a list of clients currently connected to the server
 --  *allDes     -> Pointer to the master set of socket file descriptors
 --  *tempDes    -> Pointer to the temporary set of socket file descriptors
 --  numReady    -> The number of sockets for which an event has occurred
@@ -204,7 +227,7 @@ int ServerLoop(int listenSocket)
 --      - binds it to a port
 --      - starts listening for incoming connections
 ----------------------------------------------------------------------------------------------------------------------*/
-void RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *tempDes, int numReady)
+void RecvClientMessage(fd_set *allDes, fd_set *tempDes, int numReady)
 {
     ClientInfo fromClient;
     string message;
@@ -212,7 +235,7 @@ void RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *t
     char *bufferPtr;
     int bytesRecv;
 
-    for(unsigned int i = 0; i < clientList.size(); i++)
+    for(unsigned int i = 0; i < clientList.size() && serverExitFlag; i++)
     {
         fromClient = clientList.at(i);
         if(fromClient.Socket < 0)
@@ -226,11 +249,11 @@ void RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *t
             bytesRecv = read(fromClient.Socket, bufferPtr, BUFF_LEN);
             buffer[strlen(buffer)] = 0;
 
-            message = fromClient.Address + ": " + string(buffer);
+            message = fromClient.Name + ": " + string(buffer);
 
             if(bytesRecv == 0)
             {
-                DisplayOutput("Remote Address: " + fromClient.Address + " closed connection");
+                DisplayOutput("Client disconnected: " + fromClient.Name);
                 close(fromClient.Socket);
 
                 FD_CLR(fromClient.Socket, allDes);
@@ -246,11 +269,11 @@ void RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *t
                     continue;
                 }
 
-                write(clientList.at(j).Socket, message.c_str(), strlen(message.c_str()) + 1);
+                write(clientList.at(j).Socket, message.c_str(), message.length() + 1);
             }
 
             // Need to clear the write buffer here
-            //  Characters are being on disconnect
+            //  Characters are being sent on disconnect
 
             strcpy(buffer, "");
             if(--numReady <= 0)
@@ -259,4 +282,75 @@ void RecvClientMessage(vector<ClientInfo> &clientList, fd_set *allDes, fd_set *t
             }
         }
     }
+}
+
+/*----------------------------------------------------------------------------------------------------------------------
+-- FUNCTION: Count
+--
+-- DATE: March 23, 2015
+--
+-- DESIGNER: Julian Brandrick
+--
+-- PROGRAMMER: Julian Brandrick
+--
+-- INTERFACE: string Count (string address)
+--
+-- PARAMETERS:
+--  address -> The address to be counted
+--
+-- RETURNS: string
+--
+-- NOTES:
+--  This function counts the number of occurences of "address" in the client list;
+--
+--  It returns the name of the client, which is a concatenation of its address plus the number of clients with the
+--      same address and separated by a dash. eg:
+--      "192.168.1.51-1" -> The first client with the address "192.168.1.51".
+----------------------------------------------------------------------------------------------------------------------*/
+string Count(string address)
+{
+    stringstream str;
+    int num = 1;
+    
+    for(unsigned int i = 0; i < clientList.size(); i++)
+    {
+        if(clientList.at(i).Address == address)
+            num++;
+    }
+    
+    str << address << "-" << num;
+    
+    return str.str();
+}
+
+/*----------------------------------------------------------------------------------------------------------------------
+-- FUNCTION: SignalHandler
+--
+-- DATE: March 23, 2015
+--
+-- DESIGNER: Julian Brandrick
+--
+-- PROGRAMMER: Julian Brandrick
+--
+-- INTERFACE: void SignalHandler (int sigNum)
+--
+-- PARAMETERS:
+--  sigNum  -> Unused
+--
+-- RETURNS: void
+--
+-- NOTES:
+--  This function catches a signal and sends a shutdown message to all connected clients. It then tells the server
+--      loop to exit.
+----------------------------------------------------------------------------------------------------------------------*/
+void SignalHandler(int sigNum)
+{
+    char exitChar = EOT;
+    
+    for(unsigned int i = 0; i < clientList.size(); i++)
+    {
+        write(clientList.at(i).Socket, &exitChar, sizeof(exitChar));
+    }
+    
+    serverExitFlag = false;
 }
